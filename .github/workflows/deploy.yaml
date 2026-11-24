@@ -35,6 +35,7 @@ jobs:
 
             # Run ingestion
             python ingest_all.py
+            python ingest_analytics.py
 
             # Restart FastAPI
             sudo systemctl restart fastapi.service
