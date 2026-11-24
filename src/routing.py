@@ -1,11 +1,12 @@
 import os
 from typing import Literal
 
-from langchain_groq import ChatGroq
-from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
+from src.rate_limit import gemini_limiter
 
 from src.models import (
     RetrievalDecision,
+    BatchRelevanceDecision,
     RelevanceDecision,
     IsSUPDecision,
     IsUSEDecision,
@@ -18,14 +19,16 @@ from src.config import MAX_RETRIES, MAX_REWRITE_TRIES
 # LLM + structured output variants
 # ─────────────────────────────────────────────
 
-# Llama — used for all graders and routing (fast, cheap, JSON output)
-llm = ChatGroq(model="llama-3.3-70b-versatile", api_key=os.getenv("GROQ_API_KEY"))
+# Gemini handles generation, routing, and structured quality checks.
+llm = ChatGoogleGenerativeAI(model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"), google_api_key=os.getenv("GEMINI_API_KEY"), temperature=0,
+                           rate_limiter=gemini_limiter, max_retries=2)
 
-# GPT-4o — used ONLY for voice answer generation (best natural Urdu quality)
-voice_llm = ChatOpenAI(model="gpt-4o", api_key=os.getenv("OPENAI_API_KEY"))
+# Voice prompts use the same Gemini model.
+voice_llm = llm
 
 decision_llm  = llm.with_structured_output(RetrievalDecision)
 relevance_llm = llm.with_structured_output(RelevanceDecision)
+batch_relevance_llm = llm.with_structured_output(BatchRelevanceDecision)
 issup_llm     = llm.with_structured_output(IsSUPDecision)
 isuse_llm     = llm.with_structured_output(IsUSEDecision)
 rewrite_llm   = llm.with_structured_output(RewriteDecision)

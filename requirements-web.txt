@@ -1,0 +1,2 @@
+# Compatibility entry point; the web and API share one dependency set.
+-r requirements.txt

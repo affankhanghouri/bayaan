@@ -12,11 +12,36 @@
 [![Flutter](https://img.shields.io/badge/Flutter-Mobile-02569B?style=flat-square&logo=flutter&logoColor=white)](https://flutter.dev)
 [![AWS EC2](https://img.shields.io/badge/AWS-EC2_+_CI%2FCD-FF9900?style=flat-square&logo=amazonaws&logoColor=white)](https://aws.amazon.com/ec2/)
 
-**[🌐 Live API Docs](http://100.51.253.129:8000/docs)** · **[📱 Flutter App](#)** · **[🖥️ Web App](#)**
+**[Local Web App](http://127.0.0.1:8000)** · **[Local API Docs](http://127.0.0.1:8000/docs)**
 
 </div>
 
 ---
+
+## Run the web app
+
+This repository contains the Python backend and a responsive browser frontend in `web/`. The Flutter source is not included. Both clients can use the same `/chat`, `/voice`, and conversation endpoints.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env  # only for a fresh setup; preserve an existing .env
+# Set GEMINI_API_KEY and UPLIFTAI_API_KEY in .env
+uvicorn api.app:app --host 127.0.0.1 --port 8000
+```
+
+Open **http://127.0.0.1:8000**. Text chat, microphone recording, spoken replies, English/Urdu/Sindhi/Balochi selection, and conversation history are available. Recording requires localhost or HTTPS and browser microphone permission. Tap the microphone again to send; recordings stop after 60 seconds. English speech uses Gemini TTS; Urdu, Sindhi and Balochi use Uplift AI. Regional voice IDs can be overridden with `UPLIFTAI_SINDHI_VOICE_ID` and `UPLIFTAI_BALOCHI_VOICE_ID` if your account uses different voices.
+
+API keys stay in the server environment. No OpenAI or Groq key is needed. Gemini handles answer generation, structured graph checks, translation and audio transcription. The graph completes its checks before delivering the answer over SSE. Gemini requests share a default budget of five per minute; daily quotas still apply. Set `GEMINI_REQUESTS_PER_MINUTE` to your actual provider quota. Relevance checks are batched to reduce calls, and longer queries send status updates while waiting. If speech synthesis fails, the text answer remains available.
+
+`STORAGE_MODE=local` keeps all database storage on your computer, even if cloud credentials exist in your environment. Search uses BM25 over the bundled `data/*.txt` documents and conversations persist in `conversations.db`. No ingestion step or cloud credentials are needed locally. The source documents are snapshots: confirm current government fees and requirements with NADRA.
+
+For a future optional cloud path, explicitly set `STORAGE_MODE=cloud`, `QDRANT_URL`, `QDRANT_API_KEY`, and `SUPABASE_DB_URL`, then run `python ingest_all.py`. Cloud embeddings now use Gemini (`gemini-embedding-001`, 3072 dimensions). Use a **new collection**, such as `nia_gemini_chunks`; existing OpenAI vectors are incompatible and must be re-ingested. The original PostgreSQL conversation store is retained when Supabase is configured.
+
+The local app is a single-user workspace. Before sharing a hosted instance, add authentication and conversation ownership checks. Deploy the Python service with the `web/` and `data/` directories, persistent storage for SQLite (or Supabase), runtime secrets, and HTTPS. Static-only hosting cannot run this backend. The original EC2 deployment workflow remains in `.github/workflows/`; no remote deployment is performed by local setup.
+
+For a repeatable environment use `pip install -r requirements.lock.txt`. To run integration tests, install pytest and run `python -m pytest -q`. Health configuration flags at `/health` indicate that keys are present, not that provider quota or credentials are valid.
 
 ## What Is Tafseel?
 
@@ -28,7 +53,7 @@ Phase 1 covers the NADRA knowledge domain. The architecture is domain-agnostic a
 
 ## Architecture
 
-This is not a standard RAG pipeline. Tafseel implements a **multi-node agentic graph** with self-correction loops, hallucination detection, and query rewriting — all orchestrated by LangGraph. Every answer passes through three independent quality gates before it reaches the user.
+This is not a standard RAG pipeline. Tafseel implements a **multi-node agentic graph** with self-correction loops, hallucination detection, and query rewriting — all orchestrated by LangGraph. Retrieved answers pass through relevance, grounding, and usefulness checks before delivery. Candidate chunks are graded in one batch to reduce API calls.
 
 ```
                          ┌─────────────────┐
@@ -141,7 +166,7 @@ Even a grounded answer can fail to address what the user actually asked. The fin
 ┌──────────────┐     audio file      ┌─────────────────────────────────────────┐
 │  Flutter App │ ──────────────────► │             FastAPI /voice              │
 │  (mobile)    │ ◄────────────────── │                                         │
-└──────────────┘   SSE stream        │  1. Whisper-1 (OpenAI)                  │
+└──────────────┘   SSE stream        │  1. Gemini audio transcription                  │
                    · status events   │     └─ Transcribes Urdu speech to text  │
                    · transcript      │                                         │
                    · answer text     │  2. LangGraph Agentic RAG Pipeline      │
@@ -194,8 +219,8 @@ This makes it safe to re-run the ingestion script at any time without corrupting
 | **Orchestration** | LangGraph | Stateful graph with cycles — essential for revision and rewrite loops |
 | **Vector Store** | Qdrant Cloud | High-performance ANN search, production-grade cloud hosting |
 | **Relational Store** | Supabase (PostgreSQL) | Parent chunk storage with connection pooling |
-| **Embeddings** | `text-embedding-3-small` | 1536-dim, strong multilingual performance |
-| **STT** | OpenAI Whisper-1 | Best-in-class Urdu transcription accuracy |
+| **Embeddings** | `gemini-embedding-001` (cloud) / BM25 (local) | Gemini vectors or local document search |
+| **STT** | Gemini audio understanding | Audio transcription without OpenAI |
 | **TTS** | UpliftAI | Pakistani Urdu voice models, natural prosody |
 | **API** | FastAPI + SSE | Async streaming, low-latency event delivery |
 | **Mobile** | Flutter | Cross-platform iOS & Android |
@@ -207,7 +232,8 @@ This makes it safe to re-run the ingestion script at any time without corrupting
 
 ```
 tafseel/
-├── app.py               # FastAPI — /chat, /voice, /health
+├── api/app.py           # FastAPI + web UI — /chat, /voice, /health
+├── web/                 # Browser interface (HTML/CSS/JS)
 ├── main.py              # CLI test runner
 ├── ingest_all.py        # Ingestion entrypoint
 └── src/
@@ -234,18 +260,17 @@ pip install -r requirements.txt
 **.env**
 ```env
 GEMINI_API_KEY=
-OPENAI_API_KEY=
 UPLIFTAI_API_KEY=
 UPLIFTAI_VOICE_ID=v_8eelc901
 QDRANT_URL=
 QDRANT_API_KEY=
-QDRANT_COLLECTION=nia_child_chunks
+QDRANT_COLLECTION=nia_gemini_chunks
 supabase_db_url=postgresql://postgres:[password]@db.xxx.supabase.co:5432/postgres
 ```
 
 ```bash
-python ingest_all.py          # ingest data/
-uvicorn app:app --port 8000   # start server
+python ingest_all.py          # optional: ingest data/ into configured cloud stores
+uvicorn api.app:app --port 8000   # start server
 ```
 
 ---
@@ -279,7 +304,7 @@ data: {"type": "done"}
 
 - [x] Phase 1 — NADRA knowledge base
 - [ ] Phase 2 — BISP, Passport, FBR, PEMRA
-- [ ] Phase 3 — Multi-turn conversation memory
+- [x] Phase 3 — Multi-turn conversation memory
 - [ ] Phase 4 — District-level localization & offline support
 
 ---

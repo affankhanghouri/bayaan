@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import os
+from pathlib import Path
 import time
 import uuid
 from typing import List, Optional
@@ -20,14 +21,14 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from psycopg2.pool import SimpleConnectionPool
 
-from langchain_community.document_loaders import TextLoader
 from langchain_core.documents import Document
-from langchain_openai import OpenAIEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, FieldCondition, Filter, MatchValue, PointStruct, VectorParams
 
 from src.config import (
+    STORAGE_MODE,
     EMBEDDING_DIMENSIONS,
     EMBEDDING_MODEL,
     PARENT_CHUNK_OVERLAP,
@@ -44,7 +45,14 @@ from src.config import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-embeddings = OpenAIEmbeddings(model=EMBEDDING_MODEL)
+embeddings = None
+
+
+def get_embeddings():
+    global embeddings
+    if embeddings is None:
+        embeddings = GoogleGenerativeAIEmbeddings(model=EMBEDDING_MODEL, google_api_key=os.getenv("GEMINI_API_KEY"))
+    return embeddings
 
 _pg_pool = None
 
@@ -194,7 +202,7 @@ def ingest_file(file_path: str, pg_conn, qdrant_client: QdrantClient, batch_size
         logger.info(f"  New file: {file_path} — ingesting...")
         status = 'new'
 
-    raw_docs = TextLoader(file_path, encoding="utf-8").load()
+    raw_docs = [Document(page_content=Path(file_path).read_text(encoding="utf-8"), metadata={"source": file_path})]
 
     parent_splitter = RecursiveCharacterTextSplitter(
         chunk_size=PARENT_CHUNK_SIZE,
@@ -227,7 +235,7 @@ def ingest_file(file_path: str, pg_conn, qdrant_client: QdrantClient, batch_size
             continue
 
         child_texts = [c.page_content for c in child_docs]
-        child_embeddings = embeddings.embed_documents(child_texts)
+        child_embeddings = get_embeddings().embed_documents(child_texts)
 
         for idx, (child_doc, child_vec) in enumerate(zip(child_docs, child_embeddings)):
             pending_points.append(
@@ -266,6 +274,12 @@ def ingest_all(data_dir: str = "data", batch_size: int = 20) -> None:
     - Changed files → old vectors deleted → re-ingested fresh (no duplicates)
     - New files → ingested fresh
     """
+    if STORAGE_MODE == "local":
+        from src.local_retrieval import LocalRetriever
+        local = LocalRetriever(k=RETRIEVER_K, data_dir=data_dir)
+        logger.info("Local knowledge base ready: %s chunks. No cloud ingestion required.", len(local.docs))
+        return
+
     logger.info("=== Starting Multi-File Ingestion ===")
 
     txt_files = sorted(glob.glob(os.path.join(data_dir, "*.txt")))
@@ -339,7 +353,7 @@ class ParentChildRetriever:
         if not self._qdrant:
             self._init_connections()
 
-        query_vector = embeddings.embed_query(query)
+        query_vector = get_embeddings().embed_query(query)
 
         hits = self._qdrant.query_points(
             collection_name=QDRANT_COLLECTION,
@@ -403,5 +417,9 @@ retriever = None
 def get_retriever():
     global retriever
     if retriever is None:
-        retriever = ParentChildRetriever(k=RETRIEVER_K)
+        if QDRANT_URL and SUPABASE_DB_URL:
+            retriever = ParentChildRetriever(k=RETRIEVER_K)
+        else:
+            from src.local_retrieval import LocalRetriever
+            retriever = LocalRetriever(k=RETRIEVER_K)
     return retriever

@@ -16,6 +16,11 @@ class RelevanceDecision(BaseModel):
     )
 
 
+class BatchRelevanceDecision(BaseModel):
+    relevant_indices: List[int] = Field(default_factory=list,
+        description="Zero-based indices of documents that directly help answer the question. Exclude unrelated documents.")
+
+
 class IsSUPDecision(BaseModel):
     issup: Literal["fully_supported", "partially_supported", "no_support"]
     evidence: List[str] = Field(default_factory=list)

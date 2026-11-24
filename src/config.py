@@ -3,19 +3,19 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-ENV = os.getenv("ENV", "production")
+ENV = os.getenv("ENV", "development")
+STORAGE_MODE = os.getenv("STORAGE_MODE", "local").strip().lower()
+if STORAGE_MODE not in {"local", "cloud"}:
+    raise ValueError("STORAGE_MODE must be local or cloud")
 
-# ── Supabase PostgreSQL (Replaces SQLite) ────────────────────────────────────
-# Format: postgresql://postgres:[DB-PASSWORD]@db.fpnzkzkzwjwrpigmupnl.supabase.co:5432/postgres
-# NOTE: You need your Database password from Supabase Dashboard → Database → Connection String
-SUPABASE_DB_URL = os.getenv('supabase_db_url')
+# Optional future cloud storage. Local mode ignores these credentials.
+SUPABASE_DB_URL = (os.getenv('SUPABASE_DB_URL') or os.getenv('supabase_db_url')) if STORAGE_MODE == "cloud" else None
     
 
-# ── Qdrant Cloud (Replaces Local File Storage) ───────────────────────────────
-# Using your provided cloud instance
-QDRANT_URL = os.getenv("QDRANT_URL")
-QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
-QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "nia_child_chunks")
+# Optional cloud vector search; local mode searches the bundled documents.
+QDRANT_URL = os.getenv("QDRANT_URL") if STORAGE_MODE == "cloud" else None
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY") if STORAGE_MODE == "cloud" else None
+QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "nia_gemini_chunks")
 
 # ── Chunking (Unchanged) ────────────────────────────────────────────────────
 PARENT_CHUNK_SIZE = 1000
@@ -27,15 +27,9 @@ CHILD_CHUNK_OVERLAP = 50
 RETRIEVER_K = 5
 
 # ── Embedding ───────────────────────────────────────────────────────────────
-EMBEDDING_MODEL = "text-embedding-3-small"
-EMBEDDING_DIMENSIONS = 1536
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "models/gemini-embedding-001")
+EMBEDDING_DIMENSIONS = 3072
 
 # ── LangGraph Limits ────────────────────────────────────────────────────────
 MAX_RETRIES = 3
 MAX_REWRITE_TRIES = 3
-
-# Local dev fallback (when ENV=development)
-if ENV == "development":
-    QDRANT_URL = os.getenv("QDRANT_URL", None)  # None = local file mode
-    QDRANT_API_KEY = None
-    SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL", "sqlite:///./parent_chunks.db")
