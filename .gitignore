@@ -9,7 +9,7 @@ parent_chunks.db-shm
 parent_chunks.db-wal
 nia_chat.html
 *.so
-
+parent_chunks.db
 # Distribution / packaging
 .Python
 .vscode
